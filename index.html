@@ -338,12 +338,76 @@
     font-weight: 800;
     margin: 0 0 10px 0;
   }
-  .success-view p {
+  .success-view > p {
     color: var(--grigio-testo);
     font-size: 14px;
     line-height: 1.6;
     max-width: 380px;
     margin: 0 auto;
+  }
+
+  .event-summary {
+    background: #05070a;
+    border: 1px solid rgba(255,255,255,0.1);
+    border-radius: 12px;
+    padding: 20px 24px;
+    margin: 26px auto 0 auto;
+    max-width: 380px;
+    text-align: left;
+  }
+  .event-summary-city {
+    font-size: 17px;
+    font-weight: 800;
+    color: #ffffff;
+    margin: 0 0 4px 0;
+  }
+  .event-summary-datetime {
+    font-size: 14px;
+    font-weight: 700;
+    color: var(--turchese);
+    margin: 0 0 10px 0;
+  }
+  .event-summary-venue {
+    font-size: 13px;
+    color: var(--grigio-testo);
+    line-height: 1.5;
+    margin: 0;
+  }
+
+  .calendar-label {
+    font-size: 12px;
+    font-weight: 700;
+    color: #566270;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    margin: 26px 0 14px 0 !important;
+    max-width: none !important;
+  }
+
+  .calendar-buttons {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    max-width: 380px;
+    margin: 0 auto;
+  }
+  .calendar-btn {
+    display: block;
+    text-decoration: none;
+    font-family: 'Urbanist', Arial, sans-serif;
+    font-weight: 700;
+    font-size: 14px;
+    padding: 13px 20px;
+    border-radius: 10px;
+    text-align: center;
+    transition: opacity 0.2s ease, border-color 0.2s ease;
+    border: 1px solid rgba(255,255,255,0.14);
+    color: #ffffff;
+    background-color: #05070a;
+  }
+  .calendar-btn:hover {
+    opacity: 0.8;
+    border-color: rgba(0,220,229,0.4);
   }
 
   footer {
@@ -496,7 +560,20 @@
         </svg>
       </div>
       <h3>Prenotazione ricevuta</h3>
-      <p>Grazie! Abbiamo registrato la tua richiesta di partecipazione. Ti contatteremo a breve con tutti i dettagli.</p>
+      <p>Grazie! Abbiamo registrato la tua richiesta di partecipazione.</p>
+
+      <div class="event-summary" id="eventSummary">
+        <p class="event-summary-city" id="summaryCity"></p>
+        <p class="event-summary-datetime" id="summaryDateTime"></p>
+        <p class="event-summary-venue" id="summaryVenue"></p>
+      </div>
+
+      <p class="calendar-label">Aggiungi l'evento al tuo calendario</p>
+      <div class="calendar-buttons">
+        <a href="#" id="btnGoogleCal" target="_blank" rel="noopener" class="calendar-btn">Google Calendar</a>
+        <a href="#" id="btnOutlookCal" target="_blank" rel="noopener" class="calendar-btn calendar-btn-outlook">Outlook</a>
+        <a href="#" id="btnIcsCal" class="calendar-btn calendar-btn-ics">Apple / altri (.ics)</a>
+      </div>
     </div>
 
   </div>
@@ -518,6 +595,143 @@
   const submitBtn = document.getElementById('submitBtn');
   const formError = document.getElementById('formError');
 
+  // --------------------------------------------------------
+  // DATI LOCATION — DEVONO RESTARE IDENTICI a quelli nello
+  // script Apps Script (LOCATIONS). Se cambi data/ora/indirizzo
+  // in un posto, aggiornalo anche nell'altro: sono due copie
+  // separate degli stessi dati, non collegate automaticamente.
+  //
+  // Formato date: [anno, mese(0-indicizzato!), giorno, ora, minuti]
+  // Settembre = mese 8 (Gennaio=0, Febbraio=1, ... Settembre=8)
+  // --------------------------------------------------------
+  const LOCATIONS = {
+    "Viterbo - 10 settembre": {
+      citta: "Viterbo",
+      venue: "Aldero Hotel",
+      indirizzo: "Via Quartaccio 1, 01033 Civita Castellana (Viterbo)",
+      inizio: [2026, 8, 10, 15, 0],
+      fine:   [2026, 8, 10, 17, 0]
+    },
+    "Milano - 15 settembre": {
+      citta: "Milano",
+      venue: "Voya Rooftop",
+      indirizzo: "Viale Achille Papa 30, 20° Piano, Torre World Join Center, 20149 Milano",
+      inizio: [2026, 8, 15, 15, 0],
+      fine:   [2026, 8, 15, 17, 0]
+    },
+    "Treviso - 18 settembre": {
+      citta: "Treviso",
+      venue: "Villa Cornér della Regina",
+      indirizzo: "Via Corriva 10, 31050 Cavasagra di Vedelago (Treviso)",
+      inizio: [2026, 8, 18, 15, 0],
+      fine:   [2026, 8, 18, 17, 0]
+    }
+  };
+
+  // Converte [anno, mese, giorno, ora, minuti] in stringa UTC 'yyyyMMddTHHmmssZ'
+  // ATTENZIONE: assume ora legale italiana (CEST, UTC+2), valida per
+  // settembre. Per un evento in periodo con UTC+1 (ott-mar) il "-2"
+  // andrebbe cambiato in "-1".
+  function toUtcString(parts) {
+    const [y, m, d, h, min] = parts;
+    // Costruita come UTC diretto, poi sottraiamo 2h per compensare CEST->UTC
+    const utcMillis = Date.UTC(y, m, d, h, min) - (2 * 60 * 60 * 1000);
+    const dt = new Date(utcMillis);
+    const pad = n => String(n).padStart(2, '0');
+    return dt.getUTCFullYear() + pad(dt.getUTCMonth()+1) + pad(dt.getUTCDate()) +
+      'T' + pad(dt.getUTCHours()) + pad(dt.getUTCMinutes()) + '00Z';
+  }
+
+  function formatDataLeggibile(parts) {
+    const mesi = ['gennaio','febbraio','marzo','aprile','maggio','giugno','luglio','agosto','settembre','ottobre','novembre','dicembre'];
+    return parts[2] + ' ' + mesi[parts[1]] + ' ' + parts[0];
+  }
+
+  function formatOra(parts) {
+    const pad = n => String(n).padStart(2, '0');
+    return pad(parts[3]) + ':' + pad(parts[4]);
+  }
+
+  function generaLinkGoogleCalendar(loc) {
+    const dettagli = loc.venue + ', ' + loc.indirizzo;
+    const testo = 'Evento AYRA — ' + loc.citta;
+    const dettagliEvento = "Ti aspettiamo per scoprire il futuro della collaborazione con AYRA.";
+    return 'https://calendar.google.com/calendar/render?action=TEMPLATE' +
+      '&text=' + encodeURIComponent(testo) +
+      '&dates=' + toUtcString(loc.inizio) + '/' + toUtcString(loc.fine) +
+      '&location=' + encodeURIComponent(dettagli) +
+      '&details=' + encodeURIComponent(dettagliEvento);
+  }
+
+  function generaLinkOutlook(loc) {
+    const dettagli = loc.venue + ', ' + loc.indirizzo;
+    const testo = 'Evento AYRA — ' + loc.citta;
+    // Outlook Web vuole le date in formato ISO locale (le passiamo come UTC con 'Z')
+    const startIso = isoConUtc(loc.inizio);
+    const endIso = isoConUtc(loc.fine);
+    return 'https://outlook.office.com/calendar/0/deeplink/compose?' +
+      'subject=' + encodeURIComponent(testo) +
+      '&startdt=' + encodeURIComponent(startIso) +
+      '&enddt=' + encodeURIComponent(endIso) +
+      '&location=' + encodeURIComponent(dettagli) +
+      '&body=' + encodeURIComponent("Ti aspettiamo per scoprire il futuro della collaborazione con AYRA.");
+  }
+
+  function isoConUtc(parts) {
+    const [y, m, d, h, min] = parts;
+    const utcMillis = Date.UTC(y, m, d, h, min) - (2 * 60 * 60 * 1000);
+    return new Date(utcMillis).toISOString();
+  }
+
+  function generaIcsBlobUrl(loc) {
+    const dtStart = toUtcString(loc.inizio);
+    const dtEnd = toUtcString(loc.fine);
+    const dtStamp = toUtcString([
+      new Date().getUTCFullYear(), new Date().getUTCMonth(), new Date().getUTCDate(),
+      new Date().getUTCHours(), new Date().getUTCMinutes()
+    ]);
+    const uid = 'ayra-' + Date.now() + '@evento-ayra';
+
+    const ics = [
+      'BEGIN:VCALENDAR',
+      'VERSION:2.0',
+      'PRODID:-//AYRA//Evento Settembre 2026//IT',
+      'CALSCALE:GREGORIAN',
+      'METHOD:PUBLISH',
+      'BEGIN:VEVENT',
+      'UID:' + uid,
+      'DTSTAMP:' + dtStamp,
+      'DTSTART:' + dtStart,
+      'DTEND:' + dtEnd,
+      'SUMMARY:Evento AYRA — ' + loc.citta,
+      'LOCATION:' + loc.venue + ', ' + loc.indirizzo,
+      'DESCRIPTION:Ti aspettiamo per scoprire il futuro della collaborazione con AYRA.',
+      'STATUS:CONFIRMED',
+      'END:VEVENT',
+      'END:VCALENDAR'
+    ].join('\r\n');
+
+    const blob = new Blob([ics], { type: 'text/calendar;charset=utf-8' });
+    return URL.createObjectURL(blob);
+  }
+
+  function popolaVistaSuccesso(locationKey) {
+    const loc = LOCATIONS[locationKey];
+    if (!loc) return; // location non riconosciuta: la vista resta senza dettagli calendario
+
+    document.getElementById('summaryCity').textContent = loc.citta;
+    document.getElementById('summaryDateTime').textContent =
+      formatDataLeggibile(loc.inizio) + ' · ' + formatOra(loc.inizio) + ' – ' + formatOra(loc.fine);
+    document.getElementById('summaryVenue').textContent = loc.venue + ', ' + loc.indirizzo;
+
+    document.getElementById('btnGoogleCal').href = generaLinkGoogleCalendar(loc);
+    document.getElementById('btnOutlookCal').href = generaLinkOutlook(loc);
+
+    const icsBtn = document.getElementById('btnIcsCal');
+    icsBtn.href = generaIcsBlobUrl(loc);
+    icsBtn.setAttribute('download', 'evento-ayra-' + loc.citta.toLowerCase() + '.ics');
+  }
+
   form.addEventListener('submit', async function (e) {
     e.preventDefault();
     formError.style.display = 'none';
@@ -528,12 +742,14 @@
       return;
     }
 
+    const locationKey = form.querySelector('input[name="location"]:checked').value;
+
     const data = {
       nome: document.getElementById('nome').value.trim(),
       email: document.getElementById('email').value.trim(),
       telefono: document.getElementById('telefono').value.trim(),
       azienda: document.getElementById('azienda').value.trim(),
-      location: form.querySelector('input[name="location"]:checked').value,
+      location: locationKey,
       timestamp: new Date().toISOString()
     };
 
@@ -552,6 +768,7 @@
         body: new URLSearchParams(data).toString()
       });
 
+      popolaVistaSuccesso(locationKey);
       formView.style.display = 'none';
       successView.style.display = 'block';
     } catch (err) {
